@@ -19,25 +19,24 @@ A long-context, agentic AI assistant that never forgets — with autonomous web 
 
 ---
 
-## What it does
+## ✨ Features
 
-Recall AI is a context-aware, multi-persona, agentic chat assistant that remembers everything. While most AI apps lose track after a few exchanges, Recall AI retains the full thread, references past details proactively, and never asks you to repeat yourself.
+### Core
+- **🧠 Long-Context Memory** — retains the complete conversation and references prior details proactively.
+- **🎭 4 Purpose-Built Personas** — Personal Assistant, Interview Coach, Customer Support, Study Partner — each with a tuned system prompt and curated starter questions.
+- **📎 Multi-Format File Uploads** — PDF, DOCX, TXT, MD, CSV, JSON, PNG, JPG, WEBP, GIF — parsed and injected into context.
+- **⚡ Streaming Responses** — tokens stream live, token-by-token, with no waiting for full completion.
+- **📊 Context Health Bar** — live indicator (0 → 100 turns) so you always know where you are in the context window.
+- **📚 Full Session History** — load, resume, or delete any past conversation from the sidebar.
 
-It is built around a **3-node agent graph** that runs on every turn:
-
-```
-User message
-    ↓
-[Router] — model decides: do I need to search the web?
-    ↓ (if yes)
-[Tool]   — DuckDuckGo runs, results injected into context
-    ↓
-[Response] — final answer streamed with full memory + grounded results
-```
-
-After each response, two more agents fire automatically: one generates follow-up questions, another writes a smart session title.
+### Agentic
+- **🔍 Autonomous Web Search** — the model decides when to search. No toggle. Real-time DuckDuckGo results are injected before the answer is streamed.
+- **💡 Follow-up Suggestions** — after every response, a second agent generates 3 contextual follow-up questions as clickable chips.
+- **🏷️ Auto-Title Agent** — after the first exchange, an agent writes a smart 4-6 word session title and saves it automatically.
+- **📋 Summarize Conversation** — click once in the sidebar; an agent produces a concise bullet-point summary of the current session.
 
 ---
+
 
 ## 📸 Screenshots
 
@@ -83,23 +82,26 @@ After each response, two more agents fire automatically: one generates follow-up
 
 ---
 
-## ✨ Features
+## What it does
 
-### Core
-- **🧠 Long-Context Memory** — retains the complete conversation and references prior details proactively.
-- **🎭 4 Purpose-Built Personas** — Personal Assistant, Interview Coach, Customer Support, Study Partner — each with a tuned system prompt and curated starter questions.
-- **📎 Multi-Format File Uploads** — PDF, DOCX, TXT, MD, CSV, JSON, PNG, JPG, WEBP, GIF — parsed and injected into context.
-- **⚡ Streaming Responses** — tokens stream live, token-by-token, with no waiting for full completion.
-- **📊 Context Health Bar** — live indicator (0 → 100 turns) so you always know where you are in the context window.
-- **📚 Full Session History** — load, resume, or delete any past conversation from the sidebar.
+Recall AI is a context-aware, multi-persona, agentic chat assistant that remembers everything. While most AI apps lose track after a few exchanges, Recall AI retains the full thread, references past details proactively, and never asks you to repeat yourself.
 
-### Agentic
-- **🔍 Autonomous Web Search** — the model decides when to search. No toggle. Real-time DuckDuckGo results are injected before the answer is streamed.
-- **💡 Follow-up Suggestions** — after every response, a second agent generates 3 contextual follow-up questions as clickable chips.
-- **🏷️ Auto-Title Agent** — after the first exchange, an agent writes a smart 4-6 word session title and saves it automatically.
-- **📋 Summarize Conversation** — click once in the sidebar; an agent produces a concise bullet-point summary of the current session.
+It is built around a **3-node agent graph** that runs on every turn:
+
+```
+User message
+    ↓
+[Router] — model decides: do I need to search the web?
+    ↓ (if yes)
+[Tool]   — DuckDuckGo runs, results injected into context
+    ↓
+[Response] — final answer streamed with full memory + grounded results
+```
+
+After each response, two more agents fire automatically: one generates follow-up questions, another writes a smart session title.
 
 ---
+
 
 ## 🤖 How the Agent Graph Works
 
@@ -141,6 +143,31 @@ All prompts for every agent live in `config/prompts.py` for easy editing.
 
 ---
 
+
+## 💡 What Makes This Different
+
+Most chat apps treat memory as a nice-to-have and reasoning as a black box. Recall AI is built around two ideas:
+
+**1. Full-context memory as the core product.** The entire conversation is always in context. The personas aren't just different system prompts — they're built around use cases where memory is the killer feature: a coach that tracks your improvement turn by turn, a support agent that never needs you to re-explain, a study partner that quizzes you on what you covered last time.
+
+**2. The model acts, not just responds.** The web search isn't a button — the model decides when it needs current information and searches automatically. Follow-up suggestions aren't canned — a second agent reads the conversation and generates them fresh. Session titles aren't timestamps — a third agent writes a real title. Every turn has agents working behind the scenes.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| UI Framework | Streamlit + Custom CSS |
+| Language Model | MiniMax M2.5 (`MiniMaxAI/MiniMax-M2.5`) |
+| API Infrastructure | [Qubrid AI](https://platform.qubrid.com) |
+| Web Search | DuckDuckGo (`ddgs`) — agentic, model-initiated |
+| File Parsing | PyPDF, stdlib DOCX (zipfile + ElementTree), Pillow (images) |
+| Database | SQLite3 |
+| Dependency Management | `uv` |
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -178,20 +205,6 @@ recall-ai/
 
 ---
 
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| UI Framework | Streamlit + Custom CSS |
-| Language Model | MiniMax M2.5 (`MiniMaxAI/MiniMax-M2.5`) |
-| API Infrastructure | [Qubrid AI](https://platform.qubrid.com) |
-| Web Search | DuckDuckGo (`ddgs`) — agentic, model-initiated |
-| File Parsing | PyPDF, stdlib DOCX (zipfile + ElementTree), Pillow (images) |
-| Database | SQLite3 |
-| Dependency Management | `uv` |
-
----
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -225,16 +238,6 @@ nano .env  # Add your QUBRID_API_KEY
 # 6. Run the app
 streamlit run app.py
 ```
-
----
-
-## 💡 What Makes This Different
-
-Most chat apps treat memory as a nice-to-have and reasoning as a black box. Recall AI is built around two ideas:
-
-**1. Full-context memory as the core product.** The entire conversation is always in context. The personas aren't just different system prompts — they're built around use cases where memory is the killer feature: a coach that tracks your improvement turn by turn, a support agent that never needs you to re-explain, a study partner that quizzes you on what you covered last time.
-
-**2. The model acts, not just responds.** The web search isn't a button — the model decides when it needs current information and searches automatically. Follow-up suggestions aren't canned — a second agent reads the conversation and generates them fresh. Session titles aren't timestamps — a third agent writes a real title. Every turn has agents working behind the scenes.
 
 ---
 
