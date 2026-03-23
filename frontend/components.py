@@ -54,7 +54,6 @@ def render_locked_persona_badge(persona: str) -> None:
         <div class="recall-locked-badge">
             <span>🔒 {_persona_badge(persona)}</span>
             <span class="recall-soft-label">Start a new session to change persona</span>
-            <span class="recall-agent-badge">🔍 Web Search</span>
         </div>
         """
     )
@@ -173,31 +172,6 @@ def render_memory_bar(turn_count: int) -> None:
     )
 
 
-def render_turn_counter(turn_count: int) -> None:
-    """Render the circular turn counter inside the chat area."""
-    progress = max(0.0, min(turn_count / settings.MAX_HISTORY_MESSAGES, 1.0))
-    percentage = progress * 100
-    if turn_count < settings.CONTEXT_WARNING_TURNS:
-        accent = settings.SUCCESS_COLOR
-    elif turn_count < 95:
-        accent = settings.WARNING_COLOR
-    else:
-        accent = settings.ERROR_COLOR
-
-    _render_html(
-        f"""
-        <div class="recall-turn-counter">
-            <div class="recall-turn-ring" style="background: conic-gradient({accent} {percentage:.1f}%, rgba(110, 231, 183, 0.12) 0);">
-                <div class="recall-turn-ring-inner">
-                    <div class="recall-turn-ring-value">{turn_count}/100</div>
-                    <div class="recall-turn-ring-label">turns</div>
-                </div>
-            </div>
-        </div>
-        """
-    )
-
-
 def render_chat_messages(messages: list[dict[str, Any]]) -> None:
     """Render the chat history using Streamlit chat message containers."""
     if not messages:
@@ -218,46 +192,6 @@ def render_chat_message(message: dict[str, Any]) -> None:
     with st.chat_message(role, avatar=avatar):
         _render_html(f'<div class="{meta_class}">{escape(meta_label)}</div>')
         st.markdown(str(message.get("content", "")))
-
-
-def render_memory_stats_card(
-    stats: dict[str, Any],
-    topics: list[str],
-    session: dict[str, Any] | None,
-) -> None:
-    """Render the memory stats panel and full context details."""
-    topics_html = "".join(
-        f'<span class="recall-topic-pill">{escape(topic)}</span>' for topic in topics
-    ) or '<span class="recall-topic-pill">No topics yet</span>'
-
-    _render_html(
-        f"""
-        <section class="recall-stats-card">
-            <div class="recall-section-title">Memory Snapshot</div>
-            <div class="recall-stats-row"><span class="recall-stats-label">💬 Turns</span><strong>{stats["total_turns"]}</strong></div>
-            <div class="recall-stats-row"><span class="recall-stats-label">📝 Characters</span><strong>{stats["total_chars"]:,}</strong></div>
-            <div class="recall-stats-row"><span class="recall-stats-label">🧠 Context</span><strong>{escape(str(stats["context_health"]))}</strong></div>
-            <div class="recall-topics-row">{topics_html}</div>
-            <div class="recall-capacity">
-                <div class="recall-kicker">MINIMAX M2 CAPACITY</div>
-                <div class="recall-capacity-hero">1,000,000-token context window</div>
-                <div class="recall-capacity-sub">Used: {(stats["estimated_tokens"] / 1_000_000) * 100:.3f}% of total capacity</div>
-            </div>
-        </section>
-        """
-    )
-
-    _render_html(
-        f"""
-        <section class="recall-context-card">
-            <div class="recall-section-title">Context Details</div>
-            <div class="recall-stats-row"><span class="recall-stats-label">Messages in context</span><strong>{stats["total_messages"]}</strong></div>
-            <div class="recall-stats-row"><span class="recall-stats-label">Estimated tokens</span><strong>{stats["estimated_tokens"]:,}</strong></div>
-            <div class="recall-stats-row"><span class="recall-stats-label">Context capacity</span><strong>1,000,000</strong></div>
-            <div class="recall-stats-row"><span class="recall-stats-label">Used</span><strong>{(stats["estimated_tokens"] / 1_000_000) * 100:.3f}%</strong></div>
-        </section>
-        """
-    )
 
 
 def render_sidebar_sessions(
@@ -286,6 +220,16 @@ def render_sidebar_sessions(
         type="primary",
     ):
         action = {"type": "new_session"}
+
+    has_messages = bool(st.session_state.get("messages"))
+    if st.button(
+        "📋 Summarize Conversation",
+        key="sidebar-summarize",
+        use_container_width=True,
+        type="secondary",
+        disabled=not has_messages,
+    ):
+        action = {"type": "summarize"}
 
     st.markdown("### Session History")
     if not sessions:
@@ -370,6 +314,36 @@ def render_typing_indicator() -> None:
             </div>
             """
         )
+
+
+def render_followup_suggestions(suggestions: list[str]) -> str | None:
+    """Render clickable follow-up question chips. Returns the clicked question or None."""
+    _render_html(
+        """
+        <div class="recall-followup-head">
+            <span class="recall-kicker">💡 SUGGESTED FOLLOW-UPS</span>
+        </div>
+        """
+    )
+    for i, question in enumerate(suggestions):
+        if st.button(
+            question,
+            key=f"followup-{i}",
+            use_container_width=True,
+            type="secondary",
+        ):
+            return question
+    return None
+
+
+def render_summary_card(summary: str) -> dict[str, str] | None:
+    """Render the AI-generated conversation summary and return any follow-up action."""
+    with st.container(border=True):
+        st.caption("📋 CONVERSATION SUMMARY")
+        st.markdown(summary)
+        if st.button("Dismiss", key="dismiss-summary", type="secondary"):
+            return {"type": "dismiss_summary"}
+    return None
 
 
 def render_footer() -> None:

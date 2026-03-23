@@ -32,6 +32,8 @@ def _reset_session_state(keep_persona: bool = True) -> None:
     st.session_state["prompt_draft"] = ""
     st.session_state["clear_all_pending"] = False
     st.session_state["pending_assistant"] = False
+    st.session_state["followup_suggestions"] = []
+    st.session_state["conversation_summary"] = ""
     if keep_persona:
         st.session_state["persona"] = persona
     else:
@@ -51,6 +53,8 @@ def _ensure_session_state() -> None:
         "prompt_draft": "",
         "clear_all_pending": False,
         "pending_assistant": False,
+        "followup_suggestions": [],
+        "conversation_summary": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -74,6 +78,8 @@ def _load_session(session_id: int) -> None:
     st.session_state["prompt_draft"] = ""
     st.session_state["clear_all_pending"] = False
     st.session_state["pending_assistant"] = False
+    st.session_state["followup_suggestions"] = []
+    st.session_state["conversation_summary"] = ""
 
 
 def _handle_sidebar_action(action: dict[str, Any] | None) -> None:
@@ -102,8 +108,22 @@ def _handle_sidebar_action(action: dict[str, Any] | None) -> None:
         _reset_session_state(keep_persona=False)
         st.rerun()
 
+    if action_type == "dismiss_summary":
+        st.session_state["conversation_summary"] = ""
+        st.rerun()
 
-def _submit_message(user_text: str, uploaded_files: list[Any] | None = None) -> None:
+    if action_type == "summarize":
+        with st.spinner("Summarizing conversation..."):
+            st.session_state["conversation_summary"] = api_client.summarize_conversation(
+                st.session_state["messages"]
+            )
+        st.rerun()
+
+
+def _submit_message(
+    user_text: str,
+    uploaded_files: list[Any] | None = None,
+) -> None:
     """Persist a user message and queue the assistant response."""
     prepared = attachments.prepare_submission(user_text, uploaded_files or [])
     display_content = prepared["display_content"]
@@ -137,11 +157,13 @@ def _submit_message(user_text: str, uploaded_files: list[Any] | None = None) -> 
     st.session_state["turn_count"] = memory.get_turn_count(st.session_state["messages"])
     st.session_state["prompt_draft"] = ""
     st.session_state["pending_assistant"] = True
+    st.session_state["followup_suggestions"] = []
+    st.session_state["conversation_summary"] = ""
     st.rerun()
 
 
 def _stream_assistant_response() -> None:
-    """Stream the assistant response token-by-token, then persist it."""
+    """Stream the assistant response, then run post-response agents."""
     import time as _time
 
     context_messages = memory.build_context_window(st.session_state["messages"])
@@ -173,6 +195,18 @@ def _stream_assistant_response() -> None:
     )
     st.session_state["turn_count"] = memory.get_turn_count(st.session_state["messages"])
     st.session_state["pending_assistant"] = False
+
+    # --- Agent: generate follow-up suggestions ---
+    st.session_state["followup_suggestions"] = api_client.generate_followups(
+        st.session_state["messages"]
+    )
+
+    # --- Agent: auto-title after the first exchange ---
+    if st.session_state["turn_count"] == 1 and st.session_state.get("session_id"):
+        title = api_client.generate_session_title(st.session_state["messages"])
+        if title:
+            db.update_session_title(st.session_state["session_id"], title)
+
     st.rerun()
 
 
@@ -209,6 +243,11 @@ def main() -> None:
 
     with page_body.container():
         components.render_memory_bar(st.session_state["turn_count"])
+        if st.session_state.get("conversation_summary"):
+            summary_action = components.render_summary_card(
+                st.session_state["conversation_summary"]
+            )
+            _handle_sidebar_action(summary_action)
 
         pending_prompt = ""
         with st.container():
@@ -226,6 +265,14 @@ def main() -> None:
                 elif prompt_action == "discard":
                     st.session_state["prompt_draft"] = ""
                     st.rerun()
+
+            if st.session_state.get("followup_suggestions"):
+                selected_followup = components.render_followup_suggestions(
+                    st.session_state["followup_suggestions"]
+                )
+                if selected_followup:
+                    st.session_state["followup_suggestions"] = []
+                    _submit_message(selected_followup)
 
             user_input = st.chat_input(
                 "Message Recall AI or upload PDFs, docs, and images...",

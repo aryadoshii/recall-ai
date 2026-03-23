@@ -13,15 +13,23 @@ import requests
 from dotenv import load_dotenv
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
-from config.settings import (
-    MAX_TOKENS,
-    MODEL_NAME,
-    QUBRID_BASE_URL,
+from config.settings import MAX_TOKENS, MODEL_NAME, QUBRID_BASE_URL, TEMPERATURE
+from config.prompts import (
+    AGENT_WEB_SEARCH_ADDENDUM,
+    FOLLOWUP_AGENT_SYSTEM,
+    FOLLOWUP_AGENT_USER,
+    SUMMARY_AGENT_SYSTEM,
+    SUMMARY_AGENT_USER,
     SYSTEM_RESPONSE_RULES,
-    TEMPERATURE,
+    TITLE_AGENT_SYSTEM,
+    TITLE_AGENT_USER,
 )
 
 load_dotenv()
+
+# Detect model-initiated [SEARCH: ...] in the token stream.
+_SEARCH_RE = re.compile(r"\[SEARCH:\s*(.+?)\]", re.IGNORECASE | re.DOTALL)
+_PROBE_CHARS = 160  # buffer enough chars to catch the search tag reliably
 
 
 def _friendly_error_message(response: requests.Response | None, detail: str) -> str:
@@ -80,19 +88,6 @@ def _sanitize_assistant_content(content: str) -> str:
     return cleaned
 
 
-_SEARCH_RE = re.compile(r"\[SEARCH:\s*(.+?)\]", re.IGNORECASE | re.DOTALL)
-_MAX_AGENT_ROUNDS = 5
-
-# Keywords that signal the user wants current / real-time information.
-_SEARCH_INTENT = re.compile(
-    r"\b(news|latest|current|today|right now|recent|just happened|"
-    r"live|trending|price|weather|score|stock|crypto|bitcoin|ethereum|"
-    r"who won|election|breaking|update|2025|2026|this week|this month|"
-    r"tell me about .{0,30}today|what.s happening)\b",
-    re.IGNORECASE,
-)
-
-
 def _raw_stream(
     messages: list[dict[str, Any]], system_prompt: str, api_key: str
 ) -> Iterator[str]:
@@ -135,169 +130,131 @@ def _raw_stream(
                 continue
 
 
-# Number of characters to buffer before deciding if the model is issuing a search request.
-# The model outputs [SEARCH: ...] as the very first content when searching, so 20 chars
-# is enough to distinguish it from a normal prose response.
-_PROBE_CHARS = 20
+def chat_agent(
+    messages: list[dict[str, Any]],
+    persona_system: str,
+) -> Iterator[str]:
+    """Agentic streaming loop — model autonomously decides when to search the web.
 
-
-def chat_agent(messages: list[dict[str, Any]], persona_system: str) -> Iterator[str]:
-    """Agentic streaming loop.
-
-    Tokens are streamed live.  A small probe buffer detects ``[SEARCH: ...]``
-    in the first characters of each turn; if found, the web search executes
-    and the loop continues.  Otherwise tokens pass straight through.
+    The model is instructed to output ``[SEARCH: query]`` as its very first
+    token when it needs real-time information.  The loop intercepts that tag,
+    runs DuckDuckGo, injects results into context, and re-streams the final
+    answer.  If no search is needed the tokens flow straight through.
     """
-    from backend.tools import AGENT_SYSTEM_ADDENDUM, web_search
+    from backend.tools import web_search as _web_search
 
     api_key = getenv("QUBRID_API_KEY", "").strip()
     if not api_key:
         yield "Error: Missing `QUBRID_API_KEY` in your `.env` file."
         return
 
-    # ── Client-side search intent detection ──────────────────────────────
-    # Extract the last user message text (handles both str and multimodal list).
-    last_user_text = ""
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            raw = m.get("content", "")
-            if isinstance(raw, list):
-                last_user_text = " ".join(
-                    p.get("text", "") for p in raw if p.get("type") == "text"
-                )
-            else:
-                last_user_text = str(raw)
-            break
-
-    needs_search = bool(_SEARCH_INTENT.search(last_user_text))
-
-    if needs_search:
-        # Run the search BEFORE the model responds so results are in context.
-        query = last_user_text[:120].strip()
-        yield f"🔍 Searching the web…\n\n"
-        results = web_search(query)
-        augmented = list(messages) + [{
-            "role": "user",
-            "content": (
-                f"[Real-time web search results for your question]:\n\n{results}\n\n"
-                "Use these results to answer accurately. Today's date context is provided above."
-            ),
-        }]
-        system_prompt = (
-            f"{persona_system}\n\n{SYSTEM_RESPONSE_RULES}\n{AGENT_SYSTEM_ADDENDUM}"
-        )
-        try:
-            yield from _raw_stream(augmented, system_prompt, api_key)
-        except Exception as exc:
-            yield f"\n\n*Search-augmented response failed: {exc}*"
-        return
-    # ─────────────────────────────────────────────────────────────────────
-
-    # No search needed — stream the response directly (with model-initiated
-    # search as a fallback for cases we didn't catch client-side).
-    system_prompt = f"{persona_system}\n\n{SYSTEM_RESPONSE_RULES}\n{AGENT_SYSTEM_ADDENDUM}"
-    context = list(messages)
-
-    for _ in range(_MAX_AGENT_ROUNDS):
-        try:
-            token_gen = _raw_stream(context, system_prompt, api_key)
-        except Exception as exc:
-            yield f"\n\n*Agent error: {exc}*"
-            return
-
-        # --- probe phase: buffer first _PROBE_CHARS to detect [SEARCH: ---
-        probe = ""
-        search_found = False
-
-        for token in token_gen:
-            probe += token
-
-            m = _SEARCH_RE.search(probe)
-            if m:
-                for _ in token_gen:  # drain remainder
-                    pass
-                search_found = True
-                break
-
-            if len(probe) >= _PROBE_CHARS:
-                yield probe
-                yield from token_gen
-                return
-
-        if not search_found:
-            if probe:
-                yield probe
-            return
-
-        # --- model-initiated tool execution ---
-        query = _SEARCH_RE.search(probe).group(1).strip()
-        yield f"🔍 Searching: *{query}*…\n\n"
-        results = web_search(query)
-        context.append({"role": "assistant", "content": probe})
-        context.append({
-            "role": "user",
-            "content": (
-                f"[Web search results for '{query}']:\n\n{results}\n\n"
-                "Now answer the user's question using these results."
-            ),
-        })
-
-    yield from chat_stream(context, persona_system)
-
-
-def chat_stream(messages: list[dict[str, Any]], persona_system: str) -> Iterator[str]:
-    """Stream chat completion tokens from Qubrid, yielding text chunks as they arrive."""
-    api_key = getenv("QUBRID_API_KEY", "").strip()
-    if not api_key:
-        yield "Error: Missing `QUBRID_API_KEY` in your `.env` file."
-        return
-
-    system_prompt = f"{persona_system}\n\n{SYSTEM_RESPONSE_RULES}"
-    full_message_list = [{"role": "system", "content": system_prompt}] + [
-        {"role": message.get("role", ""), "content": message.get("content", "")}
-        for message in messages
-    ]
-    payload = {
-        "model": MODEL_NAME,
-        "messages": full_message_list,
-        "max_tokens": MAX_TOKENS,
-        "temperature": TEMPERATURE,
-        "stream": True,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    system_prompt = f"{persona_system}\n\n{SYSTEM_RESPONSE_RULES}\n{AGENT_WEB_SEARCH_ADDENDUM}"
 
     try:
-        with requests.post(
-            f"{QUBRID_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-            stream=True,
-            timeout=120,
-        ) as response:
-            response.raise_for_status()
-            for raw_line in response.iter_lines():
-                if not raw_line:
-                    continue
-                line = raw_line if isinstance(raw_line, bytes) else raw_line.encode()
-                if not line.startswith(b"data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == b"[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content") or ""
-                    if delta:
-                        yield delta
-                except (json.JSONDecodeError, IndexError, KeyError):
-                    continue
-    except RequestsConnectionError:
-        yield "\n\n*Could not reach Qubrid AI. Check your internet connection.*"
-    except requests.RequestException as exc:
-        yield f"\n\n*Request error: {exc}*"
+        token_gen = _raw_stream(list(messages), system_prompt, api_key)
+    except Exception as exc:
+        yield f"\n\n*Stream error: {exc}*"
+        return
+
+    # Buffer the first _PROBE_CHARS tokens to detect [SEARCH: ...]
+    probe = ""
+    search_detected = False
+    for token in token_gen:
+        probe += token
+        if _SEARCH_RE.search(probe):
+            for _ in token_gen:   # drain the rest of the stream
+                pass
+            search_detected = True
+            break
+        if len(probe) >= _PROBE_CHARS:
+            yield probe           # no search tag — pass through buffered + rest
+            yield from token_gen
+            return
+
+    if not search_detected:
+        if probe:
+            yield probe
+        return
+
+    # --- Tool node: run the search ---
+    match = _SEARCH_RE.search(probe)
+    query = match.group(1).strip() if match else probe.strip()
+    yield f"🔍 *Searching: {query}*\n\n"
+    results = _web_search(query)
+
+    # --- Re-stream with search results injected into context ---
+    augmented = list(messages) + [{
+        "role": "user",
+        "content": (
+            f"[Web search results for '{query}']:\n\n{results}\n\n"
+            "Use these results to answer the user's question accurately."
+        ),
+    }]
+    try:
+        yield from _raw_stream(augmented, system_prompt, api_key)
+    except Exception as exc:
+        yield f"\n\n*Search-augmented response failed: {exc}*"
+
+
+def generate_followups(messages: list[dict[str, Any]]) -> list[str]:
+    """Agent: generate 3 contextual follow-up questions after each response."""
+    api_key = getenv("QUBRID_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    recent = messages[-6:]
+    convo = "\n".join(
+        f"{m['role'].upper()}: {str(m.get('content', ''))[:300]}" for m in recent
+    )
+    prompt_msgs = [{"role": "user", "content": FOLLOWUP_AGENT_USER.format(convo=convo)}]
+    result = chat(prompt_msgs, FOLLOWUP_AGENT_SYSTEM)
+    content = result.get("content", "")
+    if not content:
+        return []
+    questions = [
+        q.strip().lstrip("•-0123456789. ")
+        for q in content.strip().splitlines()
+        if q.strip()
+    ]
+    return questions[:3]
+
+
+def generate_session_title(messages: list[dict[str, Any]]) -> str:
+    """Agent: auto-generate a smart session title after the first exchange."""
+    api_key = getenv("QUBRID_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    first_msgs = messages[:4]
+    convo = "\n".join(
+        f"{m['role'].upper()}: {str(m.get('content', ''))[:200]}" for m in first_msgs
+    )
+    prompt_msgs = [{"role": "user", "content": TITLE_AGENT_USER.format(convo=convo)}]
+    result = chat(prompt_msgs, TITLE_AGENT_SYSTEM)
+    title = result.get("content", "").strip().strip("\"'")
+    return title[:80]
+
+
+def summarize_conversation(messages: list[dict[str, Any]]) -> str:
+    """Agent: generate a concise bullet-point summary of the conversation."""
+    api_key = getenv("QUBRID_API_KEY", "").strip()
+    if not api_key:
+        return "Error: Missing `QUBRID_API_KEY` in your `.env` file."
+
+    convo_lines: list[str] = []
+    for m in messages:
+        role = str(m.get("role", "")).upper()
+        raw = m.get("api_content") or m.get("content", "")
+        if isinstance(raw, list):
+            text = " ".join(p.get("text", "") for p in raw if p.get("type") == "text")
+        else:
+            text = str(raw)
+        convo_lines.append(f"{role}: {text[:400]}")
+
+    convo = "\n".join(convo_lines)
+    prompt_msgs = [{"role": "user", "content": SUMMARY_AGENT_USER.format(convo=convo)}]
+    result = chat(prompt_msgs, SUMMARY_AGENT_SYSTEM)
+    return result.get("content") or "Could not generate a summary."
 
 
 def chat(messages: list[dict[str, Any]], persona_system: str) -> dict[str, Any]:

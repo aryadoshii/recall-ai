@@ -1,20 +1,6 @@
-"""Web search tool for the agentic loop."""
+"""DuckDuckGo web search tool used by the agentic chat loop."""
 
 from __future__ import annotations
-
-# System prompt fragment appended when agent mode is active.
-AGENT_SYSTEM_ADDENDUM = """
-## Web Search Tool
-You have access to real-time web search via DuckDuckGo. You MUST use it when:
-- The user asks about anything that happened after your training cutoff
-- The user asks for current news, prices, scores, weather, or live data
-- The user mentions a specific recent event, product release, or person in the news
-- You are not 100% certain your knowledge is up to date on the topic
-
-To trigger a search output EXACTLY this and NOTHING else (no extra text before or after):
-[SEARCH: your specific search query]
-
-Wait for the search results before writing your answer. You may search multiple times if needed."""
 
 
 def web_search(query: str, max_results: int = 5) -> str:

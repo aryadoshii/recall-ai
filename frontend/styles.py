@@ -286,6 +286,19 @@ def inject_styles() -> None:
                 fill: var(--coral);
             }
 
+            [data-testid="stToggle"] {
+                margin: 0.2rem 0 0.65rem 0;
+            }
+
+            [data-testid="stToggle"] label p {
+                color: var(--text);
+                font-weight: 600;
+            }
+
+            [data-testid="stToggle"] [data-testid="stWidgetLabelHelpInline"] {
+                color: var(--text-soft);
+            }
+
             .recall-prompt-draft {
                 padding: 1rem 1.1rem;
                 margin-bottom: 1rem;

@@ -10,6 +10,8 @@ from typing import Any, Sequence
 from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
+from config.prompts import IMAGE_CONTEXT
+
 _IMAGE_MIME: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -86,6 +88,28 @@ def _extract_text_file(data: bytes) -> tuple[str, str]:
     return text, "Text document (text extracted)"
 
 
+def _compress_image(data: bytes, mime: str, max_side: int = 1024) -> tuple[bytes, str]:
+    """Resize and compress an image to keep the base64 payload small.
+
+    Falls back to the original bytes if Pillow is not installed.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return data, mime
+
+    try:
+        img = Image.open(BytesIO(data))
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+        buf = BytesIO()
+        fmt = "JPEG" if mime == "image/jpeg" else "PNG"
+        out_mime = "image/jpeg" if fmt == "JPEG" else "image/png"
+        img.convert("RGB").save(buf, format=fmt, quality=85, optimize=True)
+        return buf.getvalue(), out_mime
+    except Exception:
+        return data, mime
+
+
 def _summarize_file(name: str, detail: str) -> str:
     """Return a markdown-safe attachment summary line."""
     return f"`{name}` - {detail}"
@@ -131,10 +155,13 @@ def prepare_submission(user_text: str, uploaded_files: Sequence[Any]) -> dict[st
             attachment_blocks.append(_build_api_attachment_block(name, extracted_text, detail))
         elif suffix in IMAGE_SUFFIXES:
             mime = _IMAGE_MIME.get(suffix, "image/jpeg")
-            b64 = base64.b64encode(data).decode("utf-8")
+            processed_data, mime = _compress_image(data, mime)
+            b64 = base64.b64encode(processed_data).decode("utf-8")
             detail = "Image attachment"
             attachment_summaries.append(_summarize_file(name, detail))
             image_parts.append({"url": f"data:{mime};base64,{b64}"})
+            # Fallback text block so text-only models still know an image was shared
+            attachment_blocks.append(IMAGE_CONTEXT.format(name=name))
         else:
             detail = "Uploaded file"
             attachment_summaries.append(_summarize_file(name, detail))
